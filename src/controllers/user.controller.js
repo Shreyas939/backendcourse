@@ -261,7 +261,7 @@ const changeCurrentPassword = asyncHandler(async(req,res) => {
 const  getCurrentUser = asyncHandler(async(req,res) => {
     return res
     .status(200)
-    .json(200,req.user,"Current user fetched successfully")
+    .json(new ApiResponse(200,req.user,"Current user fetched successfully"))
 })
 
 const updateAccountDetails = asyncHandler(async(req,res) => {
@@ -271,7 +271,7 @@ const updateAccountDetails = asyncHandler(async(req,res) => {
         throw new ApiError(400,"All fields are required")
     }
 
-    const user = User.findByIdAndUpdate(
+    const user = await User.findByIdAndUpdate(
         req.user?._id,         // Find the user document by ID
         {
             $set: {            // Update the specified fields
@@ -351,4 +351,87 @@ const updateUserCoverImage = asyncHandler(async(req,res) => {
 
 })
 
-export {registerUser,loginUser,updateUserCoverImage,logOutUser,refreshAccessToken,changeCurrentPassword,getCurrentUser,updateAccountDetails,updateUserAvatar}
+
+const getUserChannelProfile = asyncHandler(async(req,res) => {
+
+    const {username} = req.params
+
+    if(!username?.trim()) {
+        throw new ApiError(400,"Username does not exist")
+    }
+
+    const channel = await User.aggregate([
+        // Stage 1: Match the user by username (case insensitive)
+        {
+            $match: {
+                username: username?.toLowerCase() // Match the provided username after converting to lowercase
+            }
+        },
+    
+        // Stage 2: Lookup subscribers for the user
+        {
+            $lookup: {
+                from: "subscriptions",              // Join with the 'subscriptions' collection
+                localField: "_id",                  // Match '_id' of the user
+                foreignField: "channel",            // Match 'channel' field in subscriptions
+                as: "subscribers"                   // Output the results into 'subscribers' array
+            }
+        },
+    
+        // Stage 3: Lookup channels the user is subscribed to
+        {
+            $lookup: {
+                from: "subscriptions",              // Join with the 'subscriptions' collection
+                localField: "_id",                  // Match '_id' of the user
+                foreignField: "subscriber",         // Match 'subscriber' field in subscriptions
+                as: "subscribedTo"                  // Output the results into 'subscribedTo' array
+            }
+        },
+    
+        // Stage 4: Add computed fields to the output
+        {
+            $addFields: {
+                subscribersCount: {
+                    $size: "$subscribers"           // Count the number of subscribers
+                },
+                channelsSubcribedToCount: {
+                    $size: "$subscribedTo"          // Count the number of channels the user is subscribed to
+                },
+                isSubscribed: {
+                    $cond: {                         // Conditional check if the current user is subscribed
+                        if: { $in: [req.user?._id, "$subscribers.subscriber"] }, // Check if current user ID exists in subscribers
+                        then: true,                  // If exists, set to true
+                        else: false                  // Otherwise, set to false
+                    }
+                }
+            }
+        },
+    
+        // Stage 5: Project only required fields to the output
+        {
+            $project: {
+                fullName: 1,                         // Include fullName field
+                username: 1,                         // Include username field
+                subscribersCount: 1,                 // Include subscribers count
+                channelsSubcribedToCount: 1,         // Include subscribed-to count
+                isSubscribed: 1,                      // Include subscription status
+                avatar: 1,                           // Include avatar field
+                coverImage: 1,                       // Include cover image field
+                email: 1                             // Include email field
+            }
+        }
+    ]);
+    
+
+    if(!channel?.length){
+        throw new ApiError(404,"Channel does not exist")
+    }
+
+    return res
+    .status(200)
+    .json(new ApiResponse(200,channel[0],"User channel fetched successfully"))
+
+})
+
+
+export {registerUser,getUserChannelProfile,loginUser,updateUserCoverImage,logOutUser,refreshAccessToken,changeCurrentPassword,getCurrentUser,updateAccountDetails,updateUserAvatar}
